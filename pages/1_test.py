@@ -59,11 +59,15 @@ with col1:
     st.markdown('<div class="col1-bg" style="padding:20px;">', unsafe_allow_html=True)
 
     # Header
+    # st.markdown("""
+    #     <h2 style='color:white; margin-bottom:5px;'>🛠️ Accessories Sold Entry</h2>
+    #     <p style='color:#FFD700; margin-top:0;'>Enter accessories sold during repair</p>
+    # """, unsafe_allow_html=True)
     st.markdown("""
-        <h2 style='color:white; margin-bottom:5px;'>🛠️ Accessories Sold Entry</h2>
-        <p style='color:#FFD700; margin-top:0;'>Enter accessories sold during repair</p>
+        <div style='bagckground-color:#0f172a; padding:20px; border-radius:16px;'>
+        <h2 style='color:#FFD700; text-align:center;'>🛠️ Accessories Sold Entry</h2>
     """, unsafe_allow_html=True)
-
+    
     # Form inputs
     st.markdown('<span style="font-weight:bold; color:#FFD700;">Select Repair Date</span>', unsafe_allow_html=True)
     repair_date = st.date_input("", date.today())
