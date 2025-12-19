@@ -1,3 +1,4 @@
+import pip
 import streamlit as st
 from datetime import date
 import base64
@@ -6,6 +7,9 @@ import re
 import pandas as pd
 import os
 import uuid
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+
 
 # ----------------------------
 # Page configuration
@@ -55,11 +59,15 @@ with col1:
     st.markdown('<div class="col1-bg" style="padding:20px;">', unsafe_allow_html=True)
 
     # Header
+    # st.markdown("""
+    #     <h2 style='color:white; margin-bottom:5px;'>🛠️ Accessories Sold Entry</h2>
+    #     <p style='color:#FFD700; margin-top:0;'>Enter accessories sold during repair</p>
+    # """, unsafe_allow_html=True)
     st.markdown("""
-        <h2 style='color:white; margin-bottom:5px;'>🛠️ Accessories Sold Entry</h2>
-        <p style='color:#FFD700; margin-top:0;'>Enter accessories sold during repair</p>
+        <div style='bagckground-color:#0f172a; padding:20px; border-radius:16px;'>
+        <h2 style='color:#FFD700; text-align:center;'>🛠️ Accessories Sold Entry</h2>
     """, unsafe_allow_html=True)
-
+    
     # Form inputs
     st.markdown('<span style="font-weight:bold; color:#FFD700;">Select Repair Date</span>', unsafe_allow_html=True)
     repair_date = st.date_input("", date.today())
@@ -77,12 +85,11 @@ with col1:
         "Raincoat": 2000,
         "Bag": 4000,
         "Charger 2.0": 4550,
-        "Lock": 850,
         "Charger Jasiri": 10000
     }
 
     st.markdown('<span style="font-weight:bold; color:#FFD700;">Payment Mode</span>', unsafe_allow_html=True)
-    payment_mode = st.selectbox("", ["Mpesa", "Invoicing"])
+    payment_mode = st.selectbox("", ["Mpesa", "Invoicing/deductions"])
     pattern = re.compile(r"\b[A-Z0-9]{7,12}\b")
     payment_code = ""
     client_name = client_type = ""
@@ -93,8 +100,8 @@ with col1:
         else:
             st.warning("Invalid payment code")
     else:
-        client_type = st.selectbox("Client Type", ["Rider", "Client", "Financier"])
-        client_name = st.text_input("Client Name")
+        client_type = st.selectbox("Client Type", ["Rider_bike deduction", "Client", "Financier"])
+        client_name = st.text_input("Name")
 
     total_price = sum(prices[a] for a in accessories)
     st.markdown(f'<span style="font-weight:bold; color:#FFD700;">Total Cost:</span> Ksh {total_price}', unsafe_allow_html=True)
@@ -126,45 +133,63 @@ with col2:
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
+#.env
+load_dotenv()
 
+DB_URL = (
+    f"postgresql+psycopg2://"
+    f"{os.getenv('PG_USER')}:"
+    f"{os.getenv('PG_PASSWORD')}@"
+    f"{os.getenv('PG_HOST')}:"
+    f"{os.getenv('PG_PORT')}/"
+    f"{os.getenv('PG_DATABASE')}"
+)
 
-def safe_read_csv(path, columns):
-    if not os.path.exists(path) or os.stat(path).st_size == 0:
-        return pd.DataFrame(columns=columns)
-    return pd.read_csv(path)
-
-CSV_FILE = "accessories_sold.csv"
-FINAL_COLUMNS = [
-    "submission_id",
-    "repair_date",
-    "technician",
-    "accessory",
-    "price",
-    "payment_mode",
-    "payment_code",
-    "client_type",
-    "client_name",
-]
-
+engine = create_engine(DB_URL)
+def create_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS accessories_sold (
+        submission_id UUID,
+        repair_date DATE,
+        technician TEXT,
+        accessory TEXT,
+        price NUMERIC,
+        payment_mode TEXT,
+        payment_code TEXT,
+        client_type TEXT,
+        client_name TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    """
+    with engine.begin() as conn:
+        conn.execute(text(query))
+create_table()
 
 def payment_code_exists(payment_code: str) -> bool:
-    if not os.path.exists(CSV_FILE):
-        return False
-    df = pd.read_csv(CSV_FILE)
-    return payment_code in df["payment_code"].astype(str).values
+    query = """
+    SELECT 1
+    FROM accessories_sold
+    WHERE payment_code = :payment_code
+    LIMIT 1
+    """
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(query),
+            {"payment_code": payment_code}
+        ).fetchone()
+    return result is not None
 
-
-def save_rows_to_csv(rows: list[dict]):
+def save_rows_to_db(rows: list[dict]):
     df = pd.DataFrame(rows)
-    if os.path.exists(CSV_FILE):
-        df.to_csv(CSV_FILE, mode="a", header=False, index=False)
-    else:
-        df.to_csv(CSV_FILE, index=False)
-# Submit Button
-# ----------------------------
+    df.to_sql(
+        "accessories_sold",
+        engine,
+        if_exists="append",
+        index=False
+    )
+
 if st.button("Submit Accessories Sold"):
 
-    # ----------- VALIDATION -----------
     if not accessories:
         st.error("Please select at least one accessory.")
 
@@ -175,23 +200,93 @@ if st.button("Submit Accessories Sold"):
         st.error("This payment code has already been used.")
 
     elif payment_mode == "Invoicing" and (not client_type or not client_name):
-        st.error("Please provide both Client Type and Client Name for invoicing.")
+        st.error("Please provide both Client Type and Client Name.")
 
     else:
         submission_id = str(uuid.uuid4())
         rows = []
 
         for accessory in accessories:
-            rows.append ({
+            rows.append({
                 "submission_id": submission_id,
                 "repair_date": repair_date,
                 "technician": technician,
                 "accessory": accessory,
                 "price": prices[accessory],
                 "payment_mode": payment_mode,
-                "payment_code": payment_code if payment_mode == "Mpesa" else "",
-                "client_type": client_type if payment_mode == "Invoicing" else "",
-                "client_name": client_name if payment_mode == "Invoicing" else "",
+                "payment_code": payment_code if payment_mode == "Mpesa" else None,
+                "client_type": client_type if payment_mode == "Invoicing" else None,
+                "client_name": client_name if payment_mode == "Invoicing" else None,
             })
-        save_rows_to_csv(rows)
-        st.success("Accessories saved successfully")
+
+        save_rows_to_db(rows)
+        st.success("Accessories saved successfully ✅")
+
+# #
+# def safe_read_csv(path, columns):
+#     if not os.path.exists(path) or os.stat(path).st_size == 0:
+#         return pd.DataFrame(columns=columns)
+#     return pd.read_csv(path)
+
+# CSV_FILE = "accessories_sold.csv"
+# FINAL_COLUMNS = [
+#     "submission_id",
+#     "repair_date",
+#     "technician",
+#     "accessory",
+#     "price",
+#     "payment_mode", 
+#     "payment_code",
+#     "client_type",
+#     "client_name",
+# ]
+
+
+# def payment_code_exists(payment_code: str) -> bool:
+#     if not os.path.exists(CSV_FILE):
+#         return False
+#     df = pd.read_csv(CSV_FILE)
+#     return payment_code in df["payment_code"].astype(str).values
+
+
+# def save_rows_to_csv(rows: list[dict]):
+#     df = pd.DataFrame(rows)
+#     if os.path.exists(CSV_FILE):
+#         df.to_csv(CSV_FILE, mode="a", header=False, index=False)
+#     else:
+#         df.to_csv(CSV_FILE, index=False)
+# # Submit Button
+# # ----------------------------
+# if st.button("Submit Accessories Sold"):
+
+#     # ----------- VALIDATION -----------
+#     if not accessories:
+#         st.error("Please select at least one accessory.")
+
+#     elif payment_mode == "Mpesa" and not pattern.search(payment_code or ""):
+#         st.error("Invalid or missing Mpesa payment code.")
+
+#     elif payment_mode == "Mpesa" and payment_code_exists(payment_code):
+#         st.error("This payment code has already been used.")
+
+#     elif payment_mode == "Invoicing" and (not client_type or not client_name):
+#         st.error("Please provide both Client Type and Client Name for invoicing.")
+
+#     else:
+#         submission_id = str(uuid.uuid4())
+#         rows = []
+
+#         for accessory in accessories:
+#             rows.append ({
+#                 "submission_id": submission_id,
+#                 "repair_date": repair_date,
+#                 "technician": technician,
+#                 "accessory": accessory,
+#                 "price": prices[accessory],
+#                 "payment_mode": payment_mode,
+#                 "payment_code": payment_code if payment_mode == "Mpesa" else "",
+#                 "client_type": client_type if payment_mode == "Invoicing" else "",
+#                 "client_name": client_name if payment_mode == "Invoicing" else "",
+#             })
+#         save_rows_to_csv(rows)
+#         st.success("Accessories saved successfully")
