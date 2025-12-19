@@ -199,7 +199,7 @@ if st.button("Submit Accessories Sold"):
     elif payment_mode == "Mpesa" and payment_code_exists(payment_code):
         st.error("This payment code has already been used.")
 
-    elif payment_mode == "Invoicing" and (not client_type or not client_name):
+    elif payment_mode == "Invoicing/deductions" and (not client_type or not client_name):
         st.error("Please provide both Client Type and Client Name.")
 
     else:
@@ -215,8 +215,8 @@ if st.button("Submit Accessories Sold"):
                 "price": prices[accessory],
                 "payment_mode": payment_mode,
                 "payment_code": payment_code if payment_mode == "Mpesa" else None,
-                "client_type": client_type if payment_mode == "Invoicing" else None,
-                "client_name": client_name if payment_mode == "Invoicing" else None,
+                "client_type": client_type if payment_mode == "Invoicing/deductions" else None,
+                "client_name": client_name if payment_mode == "Invoicing/deductions" else None,
             })
 
         save_rows_to_db(rows)
